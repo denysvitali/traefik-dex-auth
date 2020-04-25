@@ -1,5 +1,10 @@
 package pkg
 
+import (
+	"errors"
+	"github.com/dgrijalva/jwt-go"
+)
+
 type OpenIDConfiguration struct {
 	Issuer                        string   `json:"issuer"`
 	AuthEndpoint                  string   `json:"authorization_endpoint,omitempty"`
@@ -39,7 +44,7 @@ type OpenIDConfiguration struct {
 type Oauth2TokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	TokenType    string `json:"token_type"`
-	ExpiresIn    string `json:"expires_in,omitempty"`
+	ExpiresIn    int    `json:"expires_in,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	Scope        string `json:"scope,omitempty"`
 }
@@ -48,4 +53,53 @@ type Oauth2TokenErrorResponse struct {
 	Error            string `json:"error"`
 	ErrorDescription string `json:"error_description,omitempty"`
 	ErrorUri         string `json:"error_uri,omitempty"`
+}
+
+type OpenIDTokenResponse struct {
+	Oauth2TokenResponse
+	IdToken string `json:"id_token"`
+}
+
+type OpenIDClaims struct {
+}
+
+func (c *OpenIDClaims) Valid() error {
+	return nil
+}
+
+func ParseOpenIdToken(configuration OpenIDConfiguration, rcfg *RuntimeConfig, nonce string) func (token *jwt.Token) (interface{}, error) {
+	return func (token *jwt.Token) (interface{}, error) {
+		tokenAlg := token.Header["alg"]
+		var validTokenAlg = false
+		for _, supportedAlg := range configuration.TokenAuthSignAlgSupported {
+			if supportedAlg == tokenAlg {
+				validTokenAlg = true
+			}
+		}
+
+		if !validTokenAlg {
+			return nil, errors.New("invalid token alg")
+		}
+
+		claims := token.Claims.(*jwt.MapClaims)
+		if !claims.VerifyIssuer(configuration.Issuer, true) {
+			token.Valid = false
+			return nil, errors.New("invalid token issuer")
+		}
+
+		if !claims.VerifyAudience(rcfg.ClientId, true) {
+			token.Valid = false
+			return nil, errors.New("invalid token audience")
+		}
+
+		err := claims.Valid()
+		if err != nil {
+			return nil, err
+		}
+
+		openIdClaims := token.Claims.(*OpenIDClaims)
+		openIdClaims.
+
+		return token, nil
+	}
 }

@@ -1,0 +1,13 @@
+apiVersion: cert-manager.io/v1alpha2
+kind: Certificate
+metadata:
+  name: auth-crt
+  namespace: dex
+spec:
+  commonName: auth.example.com
+  secretName: auth-cert
+  dnsNames:
+    - auth.example.com
+  issuerRef:
+    name: letsencrypt
+    kind: ClusterIssuer

@@ -1,0 +1,16 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: dex-rou
+  namespace: dex
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`dex.example.com`)
+      kind: Rule
+      services:
+        - name: dex
+          port: 5556
+  tls:
+    secretName: dex-cert

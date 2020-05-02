@@ -1,0 +1,16 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: auth-rou
+  namespace: dex
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`auth.example.com`)
+      kind: Rule
+      services:
+        - name: auth
+          port: 8080
+  tls:
+    secretName: auth-cert

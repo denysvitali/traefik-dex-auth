@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: test-dep
+  name: test-dep
+  namespace: dex
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-dep
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: test-dep
+    spec:
+      containers:
+      - image: containous/whoami
+        name: whoami
+        resources: {}
+        ports:
+          - name: http
+            containerPort: 80
+status: {}

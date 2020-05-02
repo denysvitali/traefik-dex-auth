@@ -1,0 +1,13 @@
+apiVersion: cert-manager.io/v1alpha2
+kind: Certificate
+metadata:
+  name: test-crt
+  namespace: dex
+spec:
+  commonName: test.example.com
+  secretName: test-cert
+  dnsNames:
+    - test.example.com
+  issuerRef:
+    name: letsencrypt
+    kind: ClusterIssuer

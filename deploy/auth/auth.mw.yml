@@ -1,0 +1,9 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: auth
+  namespace: dex
+spec:
+  forwardAuth:
+    address: http://auth.dex.svc.cluster.local:8080
+    trustForwardHeader: true

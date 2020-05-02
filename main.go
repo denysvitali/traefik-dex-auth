@@ -9,6 +9,7 @@ import (
 	"github.com/alexflint/go-arg"
 	"github.com/dchest/uniuri"
 	"github.com/denysvitali/traefik-dex-auth/pkg"
+	"github.com/denysvitali/traefik-dex-auth/pkg/openid"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-querystring/query"
@@ -30,13 +31,18 @@ const REDIRECT_HOSTNAME = "redirect_hostname"
 const REDIRECT_PROTO = "redirect_proto"
 const GENERIC_ERROR = "internal server error"
 
+const TDA_AUTH_COOKIE = "tda-auth"
+const TDA_SESSION_NONCE_COOKIE = "tda-auth-nonce"
+const TDA_SESSION_INFO_COOKIE = "tda-auth-info"
+const TDA_SESSION_STATE_COOKIE = "tda-auth-state"
+
 func main() {
 	var args struct {
 		ClientID     string `arg:"env:CLIENT_ID" default:"traefik-dex-auth" help:"Client ID used to identify this service with Dex"`
 		ClientSecret string `arg:"env:CLIENT_SECRET" help:"Client Secret set in the Dex config"`
 		DexUrl       string `arg:"env:DEX_URL" help:"Base URL of your Dex instance (e.g: http://127.0.0.1:5556)"`
 		TDAUrl       string `arg:"env:TDA_URL" help:"Url of the Traefik Dex Auth instance (e.g: https://auth.example.com)"`
-		CookieDomain string `arg:"env:COOKIE_DOMAIN" help:"Domain of application for the authentication cookie (e.g: example.com)"`
+		CookieDomain string `arg:"env:COOKIE_DOMAIN" help:"Domain of application for the authentication cookie (e.g: *.example.com)"`
 		HMACKey      string `arg:"env:HMAC_KEY" help:"HMAC Key, used to authenticate redirection cookies"`
 		SessionKey   string `arg:"env:SESSION_KEY" help:"Session Key, used to authenticate sessions"`
 		LoggingLevel string `arg:"env:LOG_LEVEL" help:"Logging level (debug, info, warning, error, fatal)"`
@@ -110,13 +116,6 @@ func main() {
 			log.Fatalf("unable to generate Session key")
 		}
 	}
-	log.Debugf("sessionKey=%v", sessionKey)
-	TdaCallbackUrl, err := rcfg.TdaUrl.Parse(BASE_PATH + "/callback")
-
-	if err != nil {
-		logrus.Fatalf("unable to parse callback url: %v", err)
-	}
-
 	rcfg = &pkg.RuntimeConfig{
 		Logger:         log,
 		DexUrl:         dexUrl,
@@ -125,8 +124,16 @@ func main() {
 		SessionKey:     sessionKey,
 		ClientId:       args.ClientID,
 		ClientSecret:   args.ClientSecret,
-		TdaCallbackUrl: TdaCallbackUrl,
+		TdaCallbackUrl: nil,
 	}
+
+	log.Debugf("sessionKey=%v", sessionKey)
+	TdaCallbackUrl, err := rcfg.TdaUrl.Parse(BASE_PATH + "/callback")
+	if err != nil {
+		logrus.Fatalf("unable to parse callback url: %v", err)
+	}
+
+	rcfg.TdaCallbackUrl = TdaCallbackUrl
 
 	r := gin.Default()
 	r.GET(BASE_PATH+"/login", handleLogin)
@@ -140,12 +147,8 @@ func main() {
 }
 
 func handleLogin(context *gin.Context) {
-	cookie, err := context.Cookie("tda-auth")
+	err := checkCookie(context)
 	if err == nil {
-		// Cookie set, let's check whether it's valid or not
-		rcfg.Logger.Debugf("Cookie content=%v", cookie)
-		rcfg.Logger.Debugf("valid cookie found, returning 200")
-		context.String(http.StatusOK, "success")
 		return
 	}
 
@@ -207,24 +210,45 @@ func handleLogin(context *gin.Context) {
 	// Authenticated string
 	finalAuthString := encodedQueryB64 + "|" + macString
 
-	context.SetCookie("tda-auth-info", finalAuthString, 60, "", "", true, true)
-	context.SetCookie("tda-auth-nonce", sessionNonce, 60, "", "", true, true)
-	context.SetCookie("tda-auth-state", sessionState, 60, "", "", true, true)
+	context.SetCookie(TDA_SESSION_INFO_COOKIE, finalAuthString, 60, "", "", true, true)
+	context.SetCookie(TDA_SESSION_NONCE_COOKIE, sessionNonce, 60, "", "", true, true)
+	context.SetCookie(TDA_SESSION_STATE_COOKIE, sessionState, 60, "", "", true, true)
 	context.Redirect(http.StatusTemporaryRedirect, dexAuth.String())
+}
+
+func checkCookie(context *gin.Context) error {
+	// Cookie set, let's check whether it's valid or not
+	authCookie, err := context.Cookie(TDA_AUTH_COOKIE)
+	if err != nil {
+		return err
+	}
+
+	sessionNonceCookie, err := context.Cookie(TDA_SESSION_NONCE_COOKIE)
+	if err != nil {
+		return err
+	}
+
+	rcfg.Logger.Debugf("Cookie content=%v", authCookie)
+	// JWK validation
+	jwtString := authCookie
+	openIdConfig, err := getOpenIdConfig(rcfg)
+	token, err := jwt.Parse(jwtString, openid.ParseOpenIdToken(openIdConfig, rcfg, sessionNonceCookie))
+	context.String(http.StatusOK, "success")
+	return nil
 }
 
 func handleCallback(context *gin.Context) {
 	code := context.Query("code")
 	state := context.Query("state")
-	sessionState, err := context.Cookie("tda-auth-state")
+	sessionState, err := context.Cookie(TDA_SESSION_STATE_COOKIE)
 	if err != nil {
-		rcfg.Logger.Errorf("tda-auth-state cookie missing: %v", err)
+		rcfg.Logger.Errorf("%s cookie missing: %v", TDA_SESSION_STATE_COOKIE, err)
 		context.String(http.StatusInternalServerError, GENERIC_ERROR)
 		return
 	}
-	sessionNonce, err := context.Cookie("tda-auth-nonce")
+	sessionNonce, err := context.Cookie(TDA_SESSION_NONCE_COOKIE)
 	if err != nil {
-		rcfg.Logger.Errorf("tda-auth-nonce cookie missing: %v", err)
+		rcfg.Logger.Errorf("%s cookie missing: %v", TDA_SESSION_NONCE_COOKIE, err)
 		context.String(http.StatusInternalServerError, GENERIC_ERROR)
 		return
 	}
@@ -245,36 +269,14 @@ func handleCallback(context *gin.Context) {
 	}
 
 	// Get Token Endpoint
-	openIdConfigUrl, err := rcfg.DexUrl.Parse("/.well-known/openid-configuration")
+	openIdConfig, err := getOpenIdConfig(rcfg)
 	if err != nil {
-		rcfg.Logger.Errorf("unable to determine openid-configuration URL: %v", err)
-		context.String(http.StatusInternalServerError, GENERIC_ERROR)
-		return
-	}
-
-	resp, err := http.Get(openIdConfigUrl.String())
-	if err != nil {
-		rcfg.Logger.Errorf("unable to get openId Config: %v", err)
-		context.String(http.StatusInternalServerError, GENERIC_ERROR)
-		return
-	}
-
-	var openIdConfig pkg.OpenIDConfiguration
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		rcfg.Logger.Errorf("unable to read openid config request body: %v", err)
-		context.String(http.StatusInternalServerError, GENERIC_ERROR)
-		return
-	}
-	err = json.Unmarshal(bodyBytes, &openIdConfig)
-	if err != nil {
-		rcfg.Logger.Errorf("unable to unmarshal json: %v", err)
 		context.String(http.StatusInternalServerError, GENERIC_ERROR)
 		return
 	}
 
 	if openIdConfig.TokenEndpoint == "" {
-		rcfg.Logger.Errorf("Oauth 2.0 Token endpoint missing: %s")
+		rcfg.Logger.Error("Oauth 2.0 Token endpoint missing")
 		context.String(http.StatusInternalServerError, GENERIC_ERROR)
 		return
 	}
@@ -284,6 +286,7 @@ func handleCallback(context *gin.Context) {
 	values.Add("code", code)
 	values.Add("redirect_uri", rcfg.TdaCallbackUrl.String())
 	values.Add("client_id", rcfg.ClientId)
+	values.Add("client_secret", rcfg.ClientSecret)
 	encodedData := values.Encode()
 
 	req, _ := http.NewRequest("POST",
@@ -294,14 +297,14 @@ func handleCallback(context *gin.Context) {
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Add("Content-Length", strconv.Itoa(len(encodedData)))
 
-	resp, err = http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		rcfg.Logger.Errorf("unable to perform /token request: %v", err)
 		context.String(http.StatusInternalServerError, GENERIC_ERROR)
 		return
 	}
 
-	bodyBytes, err = ioutil.ReadAll(resp.Body)
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		rcfg.Logger.Errorf("unable to read body bytes: %v", err)
 		context.String(http.StatusInternalServerError, GENERIC_ERROR)
@@ -309,7 +312,7 @@ func handleCallback(context *gin.Context) {
 	}
 
 	if resp.StatusCode == 400 {
-		var oauthErr pkg.Oauth2TokenErrorResponse
+		var oauthErr openid.Oauth2TokenErrorResponse
 		err = json.Unmarshal(bodyBytes, &oauthErr)
 		rcfg.Logger.Errorf("token retrieval failed: %v", oauthErr)
 		context.String(http.StatusInternalServerError, GENERIC_ERROR)
@@ -317,12 +320,12 @@ func handleCallback(context *gin.Context) {
 	}
 
 	if resp.StatusCode != 200 {
-		rcfg.Logger.Errorf("invalid status code %d", resp.StatusCode)
+		rcfg.Logger.Errorf("invalid status code %d, body=%v", resp.StatusCode, string(bodyBytes))
 		context.String(http.StatusInternalServerError, GENERIC_ERROR)
 		return
 	}
 
-	var oauth2TokenResponse pkg.OpenIDTokenResponse
+	var oauth2TokenResponse openid.OpenIDTokenResponse
 	err = json.Unmarshal(bodyBytes, &oauth2TokenResponse)
 	if err != nil {
 		rcfg.Logger.Errorf("unable to unmarshal oauth2 token response: %v", err)
@@ -330,10 +333,10 @@ func handleCallback(context *gin.Context) {
 		return
 	}
 
-	token, err := jwt.Parse(oauth2TokenResponse.IdToken, pkg.ParseOpenIdToken(openIdConfig, rcfg, sessionNonce))
+	token, err := jwt.Parse(oauth2TokenResponse.IdToken, openid.ParseOpenIdToken(openIdConfig, rcfg, sessionNonce))
 
 	if err != nil {
-		rcfg.Logger.Errorf("unable to decode token: %v", err)
+		rcfg.Logger.Errorf("unable to decode token: %v, token=%v", err, token)
 		context.String(http.StatusInternalServerError, GENERIC_ERROR)
 		return
 	}
@@ -344,11 +347,43 @@ func handleCallback(context *gin.Context) {
 		return
 	}
 
-	context.SetCookie("tda-auth", oauth2TokenResponse.IdToken,
+	context.SetCookie(TDA_AUTH_COOKIE, oauth2TokenResponse.IdToken,
 		oauth2TokenResponse.ExpiresIn,
 		"/",
-		rcfg.cookieDomain, true, true)
+		rcfg.CookieDomain, true, true)
 
+}
+
+func getOpenIdConfig(config *pkg.RuntimeConfig) (*openid.OpenIDConfiguration, error) {
+	if config.OpenIdConfig != nil {
+		return config.OpenIdConfig, nil
+	}
+	openIdConfigUrl, err := config.DexUrl.Parse("/.well-known/openid-configuration")
+	if err != nil {
+		config.Logger.Errorf("unable to determine openid-configuration URL: %v", err)
+		return nil, err
+	}
+
+	resp, err := http.Get(openIdConfigUrl.String())
+	if err != nil {
+		config.Logger.Errorf("unable to get openId Config: %v", err)
+		return nil, err
+	}
+
+	var openIdConfig openid.OpenIDConfiguration
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		config.Logger.Errorf("unable to read openid config request body: %v", err)
+		return nil, err
+	}
+	err = json.Unmarshal(bodyBytes, &openIdConfig)
+	if err != nil {
+		config.Logger.Errorf("unable to unmarshal json: %v", err)
+		return nil, err
+	}
+
+	config.OpenIdConfig = &openIdConfig
+	return &openIdConfig, nil
 }
 
 func handleAny(context *gin.Context) {
@@ -357,7 +392,7 @@ func handleAny(context *gin.Context) {
 
 	encodedUrl, err := rcfg.TdaUrl.Parse(BASE_PATH + "/login")
 	if err != nil {
-		rcfg.Logger.Fatalf("invalid url parsing", err)
+		rcfg.Logger.Fatalf("invalid url parsing: %v", err)
 	}
 	query := encodedUrl.Query()
 	query.Add(REDIRECT_HOSTNAME, context.Request.Header.Get("X-Forwarded-Host"))
@@ -365,5 +400,8 @@ func handleAny(context *gin.Context) {
 	query.Add(REDIRECT_URI, context.Request.RequestURI)
 	encodedUrl.RawQuery = query.Encode()
 
-	context.Redirect(http.StatusTemporaryRedirect, encodedUrl.String())
+	err = checkCookie(context)
+	if err != nil {
+		context.Redirect(http.StatusTemporaryRedirect, encodedUrl.String())
+	}
 }

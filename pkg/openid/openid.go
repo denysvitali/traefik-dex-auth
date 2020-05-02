@@ -1,8 +1,15 @@
-package pkg
+package openid
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/denysvitali/traefik-dex-auth/pkg"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/sirupsen/logrus"
+	"gopkg.in/square/go-jose.v2"
+	"io/ioutil"
+	"net/http"
 )
 
 type OpenIDConfiguration struct {
@@ -61,27 +68,49 @@ type OpenIDTokenResponse struct {
 }
 
 type OpenIDClaims struct {
+	jwt.MapClaims
 }
 
-func (c *OpenIDClaims) Valid() error {
+func (c OpenIDClaims) Valid() error {
+	// Check if the key is valid
+	logrus.Debugf("checking claims %v", c)
 	return nil
 }
 
-func ParseOpenIdToken(configuration OpenIDConfiguration, rcfg *RuntimeConfig, nonce string) func (token *jwt.Token) (interface{}, error) {
+func ParseOpenIdToken(configuration *OpenIDConfiguration, rcfg *pkg.RuntimeConfig, nonce string) func (token *jwt.Token) (interface{}, error) {
 	return func (token *jwt.Token) (interface{}, error) {
 		tokenAlg := token.Header["alg"]
 		var validTokenAlg = false
-		for _, supportedAlg := range configuration.TokenAuthSignAlgSupported {
+		for _, supportedAlg := range configuration.IDTokenSignAlgSupported {
 			if supportedAlg == tokenAlg {
 				validTokenAlg = true
 			}
 		}
 
-		if !validTokenAlg {
-			return nil, errors.New("invalid token alg")
+		jwks, err := getJWKS(configuration.JWKSUri)
+		if err != nil {
+			return nil, err
 		}
 
-		claims := token.Claims.(*jwt.MapClaims)
+		keys := jwks.Key(token.Header["kid"].(string))
+		if len(keys) != 1 {
+			return nil, errors.New("invalid key id")
+		}
+
+		key := keys[0]
+		if !key.Valid() {
+			return nil, errors.New("key is invalid")
+		}
+
+		if !validTokenAlg {
+			errorMessage := fmt.Sprintf(
+				"invalid token alg, supported token algs are %v",
+				configuration.IDTokenSignAlgSupported,
+			)
+			return nil, errors.New(errorMessage)
+		}
+
+		claims := token.Claims.(jwt.MapClaims)
 		if !claims.VerifyIssuer(configuration.Issuer, true) {
 			token.Valid = false
 			return nil, errors.New("invalid token issuer")
@@ -92,14 +121,44 @@ func ParseOpenIdToken(configuration OpenIDConfiguration, rcfg *RuntimeConfig, no
 			return nil, errors.New("invalid token audience")
 		}
 
-		err := claims.Valid()
+		if claims["nonce"] != nonce {
+			token.Valid = false
+			return nil, errors.New("invalid nonce")
+		}
+
+		err = claims.Valid()
 		if err != nil {
 			return nil, err
 		}
 
-		openIdClaims := token.Claims.(*OpenIDClaims)
-		openIdClaims.
+		token.Valid = true
 
-		return token, nil
+		_ = token.Claims.(jwt.MapClaims)
+		return key.Key, nil
 	}
+}
+
+func getJWKS(uri string) (*jose.JSONWebKeySet, error) {
+	// Get key
+	req, err := http.NewRequest("GET", uri, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	bodyBytes, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var jwks jose.JSONWebKeySet
+	err = json.Unmarshal(bodyBytes, &jwks)
+	if err != nil {
+		return nil, err
+	}
+
+	return &jwks, nil
 }

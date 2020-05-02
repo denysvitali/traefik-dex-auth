@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"github.com/denysvitali/traefik-dex-auth/pkg"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/square/go-jose.v2"
@@ -54,14 +53,14 @@ func (j JWKSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var keys []jose.JSONWebKey
 	keys = append(keys, jose.JSONWebKey{KeyID: "testkey",
 		Algorithm: "RS256",
-		Key: jwks.pk.Public(),
+		Key:       jwks.pk.Public(),
 	})
 	jwks := jose.JSONWebKeySet{Keys: keys}
 	body, err := json.Marshal(jwks)
 	if err != nil {
 		_ = r.Write(bytes.NewBufferString("err"))
 	}
-	_,_ = w.Write(body)
+	_, _ = w.Write(body)
 }
 
 func TestJwtTokenParsing(t *testing.T) {
@@ -81,26 +80,26 @@ func TestJwtTokenParsing(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	openIdConfig := OpenIDConfiguration{
-		Issuer:                    "http://server.example.com",
-		JWKSUri:                   "http://" + "127.0.0.1" + listenAddr + "/jwks",
-		TokenAuthSignAlgSupported: []string{"RS256"},
-	}
-
-	runtimeConfig := pkg.RuntimeConfig{
-		ClientId: "s6BhdRkqt3",
+	openIdConfig := OpenIDConfig{
+		ClientId:     "s6BhdRkqt3",
+		ClientSecret: "1234",
+		ServerConfig: &OpenIDConfigurationResponse{
+			Issuer:                    "http://server.example.com",
+			JWKSUri:                   "http://" + "127.0.0.1" + listenAddr + "/jwks",
+			TokenAuthSignAlgSupported: []string{"RS256"},
+		},
 	}
 
 	_ = "af0ifjsldkj"
 	nonce := "n-0S6_WzA2Mj"
 
 	claims := jwt.MapClaims{
-		"iss": "http://server.example.com",
-		"sub": "248289761001",
-		"aud": "s6BhdRkqt3",
+		"iss":   "http://server.example.com",
+		"sub":   "248289761001",
+		"aud":   "s6BhdRkqt3",
 		"nonce": "n-0S6_WzA2Mj",
-		"exp": 1311281970,
-		"iat": 1311280970,
+		"exp":   1311281970,
+		"iat":   1311280970,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = "testkey"
@@ -130,7 +129,7 @@ func TestJwtTokenParsing(t *testing.T) {
 
 	jwt.TimeFunc = time.Unix(1311280970, 0).Local
 	fmt.Printf("jwtString: %v\n", jwtString)
-	token, err = jwt.Parse(jwtString, ParseOpenIdToken(openIdConfig, &runtimeConfig, nonce))
+	token, err = jwt.Parse(jwtString, ParseOpenIdToken(&openIdConfig, nonce))
 
 	s.Close()
 	if err != nil {

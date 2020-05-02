@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/denysvitali/traefik-dex-auth/pkg"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/square/go-jose.v2"
@@ -12,7 +11,7 @@ import (
 	"net/http"
 )
 
-type OpenIDConfiguration struct {
+type OpenIDConfigurationResponse struct {
 	Issuer                        string   `json:"issuer"`
 	AuthEndpoint                  string   `json:"authorization_endpoint,omitempty"`
 	TokenEndpoint                 string   `json:"token_endpoint,omitempty"`
@@ -71,52 +70,70 @@ type OpenIDClaims struct {
 	jwt.MapClaims
 }
 
+type OpenIDConfig struct {
+	Keys         map[string]jose.JSONWebKey
+	ClientId     string
+	ClientSecret string
+
+	ServerConfig *OpenIDConfigurationResponse
+}
+
 func (c OpenIDClaims) Valid() error {
 	// Check if the key is valid
 	logrus.Debugf("checking claims %v", c)
 	return nil
 }
 
-func ParseOpenIdToken(configuration *OpenIDConfiguration, rcfg *pkg.RuntimeConfig, nonce string) func (token *jwt.Token) (interface{}, error) {
-	return func (token *jwt.Token) (interface{}, error) {
+func ParseOpenIdToken(oidcConfig *OpenIDConfig, nonce string) func(token *jwt.Token) (interface{}, error) {
+	return func(token *jwt.Token) (interface{}, error) {
 		tokenAlg := token.Header["alg"]
 		var validTokenAlg = false
-		for _, supportedAlg := range configuration.IDTokenSignAlgSupported {
+		for _, supportedAlg := range oidcConfig.ServerConfig.IDTokenSignAlgSupported {
 			if supportedAlg == tokenAlg {
 				validTokenAlg = true
 			}
 		}
 
-		jwks, err := getJWKS(configuration.JWKSUri)
-		if err != nil {
-			return nil, err
-		}
+		keyId := token.Header["kid"].(string)
+		var key *jose.JSONWebKey
+		if val, ok := oidcConfig.Keys[keyId]; ok {
+			key = &val
+		} else {
+			// Get and cache the key
+			jwks, err := getJWKS(oidcConfig.ServerConfig.JWKSUri)
+			if err != nil {
+				return nil, err
+			}
 
-		keys := jwks.Key(token.Header["kid"].(string))
-		if len(keys) != 1 {
-			return nil, errors.New("invalid key id")
-		}
+			keys := jwks.Key(token.Header["kid"].(string))
+			if len(keys) != 1 {
+				return nil, errors.New("invalid key id")
+			}
+			key = &keys[0]
 
-		key := keys[0]
-		if !key.Valid() {
-			return nil, errors.New("key is invalid")
+			if !key.Valid() {
+				return nil, errors.New("key is invalid")
+			}
+
+			// Key is valid, let's cache it
+			oidcConfig.Keys[keyId] = *key
 		}
 
 		if !validTokenAlg {
 			errorMessage := fmt.Sprintf(
 				"invalid token alg, supported token algs are %v",
-				configuration.IDTokenSignAlgSupported,
+				oidcConfig.ServerConfig.IDTokenSignAlgSupported,
 			)
 			return nil, errors.New(errorMessage)
 		}
 
 		claims := token.Claims.(jwt.MapClaims)
-		if !claims.VerifyIssuer(configuration.Issuer, true) {
+		if !claims.VerifyIssuer(oidcConfig.ServerConfig.Issuer, true) {
 			token.Valid = false
 			return nil, errors.New("invalid token issuer")
 		}
 
-		if !claims.VerifyAudience(rcfg.ClientId, true) {
+		if !claims.VerifyAudience(oidcConfig.ClientId, true) {
 			token.Valid = false
 			return nil, errors.New("invalid token audience")
 		}
@@ -126,7 +143,7 @@ func ParseOpenIdToken(configuration *OpenIDConfiguration, rcfg *pkg.RuntimeConfi
 			return nil, errors.New("invalid nonce")
 		}
 
-		err = claims.Valid()
+		err := claims.Valid()
 		if err != nil {
 			return nil, err
 		}

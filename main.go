@@ -322,9 +322,10 @@ func handleCallback(context *gin.Context) {
 		return
 	}
 
+	context.SetSameSite(http.SameSiteDefaultMode)
 	context.SetCookie(auth.TdaAuthCookie, oauth2TokenResponse.IdToken,
 		oauth2TokenResponse.ExpiresIn,
-		"/",
+		"",
 		rcfg.CookieDomain, true, true)
 
 	// Decode Auth Info

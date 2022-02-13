@@ -8,7 +8,6 @@ require (
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/gin-gonic/gin v1.6.2
 	github.com/google/go-cmp v0.4.0 // indirect
-	github.com/google/go-querystring v1.0.0
 	github.com/gorilla/schema v1.1.0
 	github.com/sirupsen/logrus v1.5.0
 	github.com/stretchr/testify v1.5.1

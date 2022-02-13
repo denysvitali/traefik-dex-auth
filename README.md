@@ -18,7 +18,15 @@ go build -o traefik-dex-auth main.go
 
 ### Docker Image
 ```bash
-docker build . -t dvitali/traefik-dex-auth:latest
+make docker-build
+
+# Image dvitali/traefik-dex-auth:latest is now available
+```
+
+#### Push Docker Image
+
+```bash
+make docker-push
 ```
 
 ## Usage

@@ -1,5 +1,5 @@
 REGISTRY=docker.io
-IMAGE=dvitali/treafik-dex-auth
+IMAGE=dvitali/traefik-dex-auth
 VERSION=$(shell git describe --tags --always --dirty)
 
 version:

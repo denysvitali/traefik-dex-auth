@@ -67,7 +67,7 @@ func ParseCookie(HmacKey []byte, cookieValue string) (string, error) {
 	}
 
 	nowTS := time.Now().Unix()
-	if authInfo.Timestamp > nowTS || nowTS - authInfo.Timestamp > RedirectTimeout {
+	if authInfo.Timestamp > nowTS || nowTS-authInfo.Timestamp > RedirectTimeout {
 		return "", errors.New("redirection timeout")
 	}
 
@@ -83,9 +83,9 @@ func ParseCookie(HmacKey []byte, cookieValue string) (string, error) {
 func CreateAuthInfoCookie(hmacKey []byte, originalQuery url.Values) (string, error) {
 	var authInfoEncoded = make(map[string][]string)
 	err := schema.NewEncoder().Encode(AuthInfo{
-		Hostname: originalQuery.Get(RedirectHostname),
-		Proto: originalQuery.Get(RedirectProto),
-		Uri: originalQuery.Get(RedirectUri),
+		Hostname:  originalQuery.Get(RedirectHostname),
+		Proto:     originalQuery.Get(RedirectProto),
+		Uri:       originalQuery.Get(RedirectUri),
 		Timestamp: time.Now().Unix(),
 	}, authInfoEncoded)
 

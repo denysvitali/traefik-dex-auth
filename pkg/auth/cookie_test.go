@@ -7,8 +7,8 @@ import (
 )
 
 func TestCookie(t *testing.T) {
-	values := url.Values {}
-	values.Set(RedirectHostname,"example.com")
+	values := url.Values{}
+	values.Set(RedirectHostname, "example.com")
 	values.Set(RedirectProto, "https")
 	values.Set(RedirectUri, "/path/to/resource")
 

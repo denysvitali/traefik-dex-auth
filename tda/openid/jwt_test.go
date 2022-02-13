@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/square/go-jose.v2"
 	"net/http"
@@ -22,7 +22,7 @@ type JWKS struct {
 }
 
 var jwks *JWKS
-var DEBUG_KEY = false
+var DebugKey = false
 
 type JWKSHandler struct {
 }
@@ -74,6 +74,7 @@ func TestJwtTokenParsing(t *testing.T) {
 		Addr:    listenAddr,
 		Handler: JWKSHandler{},
 	}
+	defer s.Close()
 	go func() {
 		_ = s.ListenAndServe()
 	}()
@@ -86,6 +87,7 @@ func TestJwtTokenParsing(t *testing.T) {
 		ServerConfig: &OpenIDConfigurationResponse{
 			Issuer:                    "http://server.example.com",
 			JWKSUri:                   "http://" + "127.0.0.1" + listenAddr + "/jwks",
+			IDTokenSignAlgSupported:   []string{"RS256"},
 			TokenAuthSignAlgSupported: []string{"RS256"},
 		},
 	}
@@ -106,7 +108,7 @@ func TestJwtTokenParsing(t *testing.T) {
 
 	jwtString, err := token.SignedString(jwks.pk)
 
-	if DEBUG_KEY {
+	if DebugKey {
 		publicKeyData := pem.EncodeToMemory(
 			&pem.Block{
 				Type:  "RSA PUBLIC KEY",
@@ -128,13 +130,10 @@ func TestJwtTokenParsing(t *testing.T) {
 	}
 
 	jwt.TimeFunc = time.Unix(1311280970, 0).Local
-	fmt.Printf("jwtString: %v\n", jwtString)
 	token, err = jwt.Parse(jwtString, ParseOpenIdToken(&openIdConfig, nonce))
-
-	s.Close()
 	if err != nil {
-		t.Error(err)
+		t.Fatalf("unable to parse JWT: %v", err)
 	}
-
 	assert.True(t, token.Valid)
+	fmt.Printf("token=%+v", token)
 }

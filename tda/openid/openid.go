@@ -94,6 +94,10 @@ func ParseOpenIdToken(oidcConfig *OpenIDConfig, nonce string) func(token *jwt.To
 			}
 		}
 
+		if oidcConfig.Keys == nil {
+			oidcConfig.Keys = map[string]jose.JSONWebKey{}
+		}
+
 		keyId := token.Header["kid"].(string)
 		var key *jose.JSONWebKey
 		if val, ok := oidcConfig.Keys[keyId]; ok {

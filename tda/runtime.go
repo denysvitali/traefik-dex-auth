@@ -1,4 +1,4 @@
-package pkg
+package tda
 
 import (
 	"github.com/sirupsen/logrus"

@@ -6,9 +6,9 @@ import (
 	"errors"
 	"github.com/alexflint/go-arg"
 	"github.com/dchest/uniuri"
-	"github.com/denysvitali/traefik-dex-auth/pkg"
-	"github.com/denysvitali/traefik-dex-auth/pkg/auth"
-	"github.com/denysvitali/traefik-dex-auth/pkg/openid"
+	"github.com/denysvitali/traefik-dex-auth/tda"
+	"github.com/denysvitali/traefik-dex-auth/tda/auth"
+	"github.com/denysvitali/traefik-dex-auth/tda/openid"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/sirupsen/logrus"
@@ -21,7 +21,7 @@ import (
 	"strings"
 )
 
-var rcfg *pkg.RuntimeConfig
+var rcfg *tda.RuntimeConfig
 var openIdConfig *openid.OpenIDConfig
 
 const BasePath = "/traefik-dex-auth"
@@ -108,7 +108,7 @@ func main() {
 			log.Fatalf("unable to generate Session key")
 		}
 	}
-	rcfg = &pkg.RuntimeConfig{
+	rcfg = &tda.RuntimeConfig{
 		Logger:         log,
 		DexUrl:         dexUrl,
 		TdaUrl:         tdaUrl,
@@ -124,7 +124,6 @@ func main() {
 		ClientSecret: args.ClientSecret,
 	}
 
-	log.Debugf("sessionKey=%v", sessionKey)
 	TdaCallbackUrl, err := rcfg.TdaUrl.Parse(BasePath + "/callback")
 	if err != nil {
 		logrus.Fatalf("unable to parse callback url: %v", err)
@@ -344,7 +343,7 @@ func handleCallback(context *gin.Context) {
 	context.Redirect(http.StatusTemporaryRedirect, redirectURL)
 }
 
-func getOpenIdConfig(config *pkg.RuntimeConfig) (*openid.OpenIDConfigurationResponse, error) {
+func getOpenIdConfig(config *tda.RuntimeConfig) (*openid.OpenIDConfigurationResponse, error) {
 	if openIdConfig.ServerConfig != nil {
 		return openIdConfig.ServerConfig, nil
 	}

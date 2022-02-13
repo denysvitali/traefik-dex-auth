@@ -20,7 +20,7 @@ const RedirectProto = "redirect_proto"
 
 const RedirectTimeout = 5 * 60 // 5 minutes timeout for the redirection to happen based on cookies
 
-type AuthInfo struct {
+type Info struct {
 	Hostname  string `schema:"hostname"`
 	Proto     string `schema:"proto"`
 	Uri       string `schema:"uri"`
@@ -33,9 +33,9 @@ func ParseCookie(HmacKey []byte, cookieValue string) (string, error) {
 		return "", errors.New("invalid cookie format")
 	}
 
-	submatches := infoMatcher.FindStringSubmatch(cookieValue)
-	encodedQueryBase64 := submatches[1]
-	hmacString := submatches[2]
+	subMatches := infoMatcher.FindStringSubmatch(cookieValue)
+	encodedQueryBase64 := subMatches[1]
+	hmacString := subMatches[2]
 
 	logrus.Debugf("encodedQueryBase64=%v, hmacString=%v",
 		encodedQueryBase64,
@@ -60,7 +60,7 @@ func ParseCookie(HmacKey []byte, cookieValue string) (string, error) {
 		return "", errors.New("unable to parse url query")
 	}
 
-	var authInfo AuthInfo
+	var authInfo Info
 	err = schema.NewDecoder().Decode(&authInfo, queryValues)
 	if err != nil {
 		return "", err
@@ -82,7 +82,7 @@ func ParseCookie(HmacKey []byte, cookieValue string) (string, error) {
 
 func CreateAuthInfoCookie(hmacKey []byte, originalQuery url.Values) (string, error) {
 	var authInfoEncoded = make(map[string][]string)
-	err := schema.NewEncoder().Encode(AuthInfo{
+	err := schema.NewEncoder().Encode(Info{
 		Hostname:  originalQuery.Get(RedirectHostname),
 		Proto:     originalQuery.Get(RedirectProto),
 		Uri:       originalQuery.Get(RedirectUri),

@@ -3,7 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"github.com/alexflint/go-arg"
 	"github.com/dchest/uniuri"
 	"github.com/denysvitali/traefik-dex-auth/tda"
@@ -143,8 +143,9 @@ func main() {
 }
 
 func handleLogin(context *gin.Context) {
-	err := checkCookie(context)
+	claims, err := checkCookie(context)
 	if err == nil {
+		rcfg.Logger.Infof("%s logged in", claims["name"])
 		return
 	}
 
@@ -181,16 +182,16 @@ func handleLogin(context *gin.Context) {
 	context.Redirect(http.StatusTemporaryRedirect, dexAuth.String())
 }
 
-func checkCookie(context *gin.Context) error {
+func checkCookie(context *gin.Context) (claims map[string]interface{}, err error) {
 	// Cookie set, let's check whether it's valid or not
 	authCookie, err := context.Cookie(auth.TdaAuthCookie)
 	if err != nil {
-		return err
+		return claims, err
 	}
 
 	sessionNonceCookie, err := context.Cookie(auth.TdaSessionNonceCookie)
 	if err != nil {
-		return err
+		return claims, err
 	}
 
 	rcfg.Logger.Debugf("Cookie content=%v", authCookie)
@@ -199,16 +200,18 @@ func checkCookie(context *gin.Context) error {
 	_, err = getOpenIdConfig(rcfg)
 	token, err := jwt.Parse(jwtString, openid.ParseOpenIdToken(openIdConfig, sessionNonceCookie))
 	if err != nil {
-		return err
+		return claims, err
 	}
-	rcfg.Logger.Debugf("Token=%v, Claims=%v", token, token.Claims.(jwt.MapClaims))
+
+	claims = token.Claims.(jwt.MapClaims)
+	rcfg.Logger.Debugf("Token=%v, Claims=%v", token, claims)
 
 	if token.Valid {
 		// token.Claims.(jwt.MapClaims)["groups"]
 		context.String(http.StatusOK, "success")
-		return nil
+		return claims, err
 	}
-	return errors.New("invalid token")
+	return claims, fmt.Errorf("invalid token")
 }
 
 func handleCallback(context *gin.Context) {
@@ -383,15 +386,33 @@ func handleAny(context *gin.Context) {
 	if err != nil {
 		rcfg.Logger.Fatalf("invalid url parsing: %v", err)
 	}
+
+	xForwardedHost := context.Request.Header.Get("X-Forwarded-Host")
+	xForwardedProto := context.Request.Header.Get("X-Forwarded-Proto")
+	xForwardedMethod := context.Request.Header.Get("X-Forwarded-Method")
+	xForwardedUri := context.Request.Header.Get("X-Forwarded-Uri")
+	xForwardedServer := context.Request.Header.Get("X-Forwarded-Server")
+
 	urlQuery := encodedUrl.Query()
-	urlQuery.Add(auth.RedirectHostname, context.Request.Header.Get("X-Forwarded-Host"))
-	urlQuery.Add(auth.RedirectProto, context.Request.Header.Get("X-Forwarded-Proto"))
+	urlQuery.Add(auth.RedirectHostname, xForwardedHost)
+	urlQuery.Add(auth.RedirectProto, xForwardedProto)
 	urlQuery.Add(auth.RedirectUri, context.Request.RequestURI)
 	encodedUrl.RawQuery = urlQuery.Encode()
 
-	err = checkCookie(context)
+	claims, err := checkCookie(context)
 	if err != nil {
 		rcfg.Logger.Debugf("handleAny, checkCookie returned %v, redirecting", err)
 		context.Redirect(http.StatusTemporaryRedirect, encodedUrl.String())
+		return
 	}
+
+	rcfg.Logger.Infof("%s (%s) requested %s - %s  - %s [%s]",
+		claims["name"],
+		claims["username"],
+		xForwardedHost,
+		xForwardedMethod,
+		xForwardedUri,
+		xForwardedServer,
+	)
+
 }
